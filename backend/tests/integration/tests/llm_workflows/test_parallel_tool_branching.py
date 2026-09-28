@@ -101,7 +101,7 @@ def test_merged_searches_and_unknown_tool_do_not_branch(
 
     tool_request, answer_request = mock_llm.requests_in("chat")
     assert _UNKNOWN_TOOL_NAME not in tool_request.tools
-    assert answer_request.tool_result_ids() == ["call_search_alpha"]
+    assert answer_request.tool_result_ids() == ["call_search_alpha", "call_unknown"]
 
 
 def test_distinct_executed_tools_branch_before_tool_starts(
