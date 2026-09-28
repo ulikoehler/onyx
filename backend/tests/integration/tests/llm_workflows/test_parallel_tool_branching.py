@@ -6,13 +6,13 @@ from onyx.server.query_and_chat.streaming_models import StreamingType
 from onyx.tools.constants import SEARCH_TOOL_ID
 from tests.integration.common_utils.managers.cc_pair import CCPairManager
 from tests.integration.common_utils.managers.chat import ChatSessionManager
+from tests.integration.common_utils.managers.mock_llm import MockLLMScript
 from tests.integration.common_utils.managers.persona import PersonaManager
 from tests.integration.common_utils.managers.tool import ToolManager
 from tests.integration.common_utils.test_models import DATestUser
-from tests.integration.mock_services.mock_llm_server.handle import ScriptHandle
 from tests.integration.mock_services.mock_llm_server.models import (
-    Matcher,
-    Step,
+    Reply,
+    RequestConditions,
     ToolCall,
 )
 
@@ -51,21 +51,21 @@ def _packet_indices(packets: list[dict[str, Any]], packet_type: str) -> list[int
 
 
 def test_merged_searches_and_unknown_tool_do_not_branch(
-    admin_user: DATestUser, mock_llm: ScriptHandle
+    admin_user: DATestUser, mock_llm: MockLLMScript
 ) -> None:
     _create_connector(admin_user)
-    mock_llm.lane(
+    mock_llm.conversation(
         "chat",
-        Step(
+        Reply(
             tool_calls=[
                 *_search_calls(),
                 ToolCall(id="call_unknown", name=_UNKNOWN_TOOL_NAME, arguments={}),
             ],
-            match=Matcher(offered_tools=[_SEARCH_TOOL_NAME]),
+            conditions=RequestConditions(offers=[_SEARCH_TOOL_NAME]),
         ),
-        Step(
+        Reply(
             text="Merged answer.",
-            match=Matcher(tool_results_for=["call_search_alpha"]),
+            conditions=RequestConditions(has_results_for=["call_search_alpha"]),
         ),
     )
     chat_session = ChatSessionManager.create(user_performing_action=admin_user)
@@ -98,13 +98,13 @@ def test_merged_searches_and_unknown_tool_do_not_branch(
 
     assert response.full_message == "Merged answer."
 
-    tool_step, answer_step = mock_llm.lane_requests("chat")
-    assert _UNKNOWN_TOOL_NAME not in tool_step.tools
-    assert answer_step.tool_result_ids() == ["call_search_alpha"]
+    tool_request, answer_request = mock_llm.requests_in("chat")
+    assert _UNKNOWN_TOOL_NAME not in tool_request.tools
+    assert answer_request.tool_result_ids() == ["call_search_alpha"]
 
 
 def test_distinct_executed_tools_branch_before_tool_starts(
-    admin_user: DATestUser, mock_llm: ScriptHandle
+    admin_user: DATestUser, mock_llm: MockLLMScript
 ) -> None:
     _create_connector(admin_user)
 
@@ -143,18 +143,20 @@ def test_distinct_executed_tools_branch_before_tool_starts(
     chat_session = ChatSessionManager.create(
         persona_id=persona.id, user_performing_action=admin_user
     )
-    mock_llm.lane(
+    mock_llm.conversation(
         "chat",
-        Step(
+        Reply(
             tool_calls=[
                 *_search_calls(),
                 ToolCall(id="call_ping", name=custom_tool_name, arguments={}),
             ],
-            match=Matcher(offered_tools=[_SEARCH_TOOL_NAME, custom_tool_name]),
+            conditions=RequestConditions(offers=[_SEARCH_TOOL_NAME, custom_tool_name]),
         ),
-        Step(
+        Reply(
             text="Both tools ran.",
-            match=Matcher(tool_results_for=["call_search_alpha", "call_ping"]),
+            conditions=RequestConditions(
+                has_results_for=["call_search_alpha", "call_ping"]
+            ),
         ),
     )
 
@@ -185,5 +187,8 @@ def test_distinct_executed_tools_branch_before_tool_starts(
 
     assert response.full_message == "Both tools ran."
 
-    _, answer_step = mock_llm.lane_requests("chat")
-    assert sorted(answer_step.tool_result_ids()) == ["call_ping", "call_search_alpha"]
+    _, answer_request = mock_llm.requests_in("chat")
+    assert sorted(answer_request.tool_result_ids()) == [
+        "call_ping",
+        "call_search_alpha",
+    ]
