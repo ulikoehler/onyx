@@ -1,3 +1,4 @@
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -104,12 +105,12 @@ def test_merged_searches_and_unknown_tool_do_not_branch(
 
 
 def test_distinct_executed_tools_branch_before_tool_starts(
-    admin_user: DATestUser, mock_llm: MockLLMScript
+    admin_user: DATestUser, mock_llm: MockLLMScript, mock_llm_server: str
 ) -> None:
     _create_connector(admin_user)
 
     custom_tool_name = f"branching_ping_{uuid4().hex[:8]}"
-    # Points at the API server itself so the call needs no external service.
+    # The mock LLM server is a real HTTP server in the test process.
     custom_tool_id = ToolManager.create_custom(
         name=custom_tool_name,
         definition={
@@ -119,11 +120,11 @@ def test_distinct_executed_tools_branch_before_tool_starts(
                 "description": "Health check",
                 "version": "1.0.0",
             },
-            "servers": [{"url": "http://localhost:8080"}],
+            "servers": [{"url": mock_llm_server}],
             "paths": {
                 "/health": {
                     "get": {
-                        "summary": "Check API server health",
+                        "summary": "Check server health",
                         "operationId": custom_tool_name,
                         "responses": {"200": {"description": "ok"}},
                     }
@@ -178,6 +179,11 @@ def test_distinct_executed_tools_branch_before_tool_starts(
     custom_starts = _packet_indices(packets, StreamingType.CUSTOM_TOOL_START.value)
     assert len(search_starts) == 1
     assert len(custom_starts) == 1
+    custom_deltas = _packet_indices(packets, StreamingType.CUSTOM_TOOL_DELTA.value)
+    assert len(custom_deltas) == 1
+    custom_delta = packets[custom_deltas[0]]["obj"]
+    assert custom_delta["error"] is None
+    assert custom_delta["data"] == {"status": "ok"}
     for start in search_starts + custom_starts:
         assert branching[0] < start
         assert (
@@ -192,3 +198,6 @@ def test_distinct_executed_tools_branch_before_tool_starts(
         "call_ping",
         "call_search_alpha",
     ]
+    ping_result = answer_request.tool_result("call_ping")
+    assert ping_result is not None
+    assert json.loads(ping_result) == {"status": "ok"}
