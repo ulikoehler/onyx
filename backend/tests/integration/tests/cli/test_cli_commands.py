@@ -5,8 +5,9 @@ These tests require a pre-built CLI binary passed via the ONYX_CLI_BINARY
 env var. In CI, the workflow builds the binary and mounts it into the test
 container. The tests are skipped when ONYX_CLI_BINARY is not set.
 
-LLM responses are mocked for the whole suite (see conftest), so the ``ask``
-tests assert on MOCK_LLM_TOKEN rather than calling a real provider.
+The LLM is the scripted mock LLM server (see the ``answering_llm`` fixture in
+conftest), so the ``ask`` tests assert on MOCK_LLM_TOKEN rather than calling a
+real provider.
 
 To run locally (requires Go toolchain + all Onyx services running):
 
@@ -56,11 +57,11 @@ from tests.integration.common_utils.constants import API_SERVER_URL
 from tests.integration.common_utils.managers.cc_pair import CCPairManager
 from tests.integration.common_utils.managers.document import DocumentManager
 from tests.integration.common_utils.managers.document_set import DocumentSetManager
+from tests.integration.common_utils.managers.mock_llm import MockLLMScript
 from tests.integration.common_utils.managers.pat import PATManager
 from tests.integration.common_utils.managers.persona import PersonaManager
 from tests.integration.common_utils.test_models import (
     DATestAPIKey,
-    DATestLLMProvider,
     DATestPersona,
     DATestUser,
 )
@@ -98,7 +99,7 @@ def pat_token(admin_user: DATestUser) -> str:
 @pytest.fixture
 def seeded_persona(
     admin_user: DATestUser,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    mock_llm: MockLLMScript,  # noqa: ARG001
 ) -> DATestPersona:
     """Create a persona with a known name for verification."""
     import uuid
@@ -179,7 +180,7 @@ def test_validate_config_not_configured(
 def test_ask_plain_text(
     cli_binary: Path,
     pat_token: str,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    answering_llm: MockLLMScript,  # noqa: ARG001
 ) -> None:
     """Ask a question using the default persona (most common usage)."""
     result = run_cli(
@@ -195,7 +196,7 @@ def test_ask_plain_text(
 def test_ask_json(
     cli_binary: Path,
     pat_token: str,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    answering_llm: MockLLMScript,  # noqa: ARG001
 ) -> None:
     """Ask in NDJSON mode and verify event types and content."""
     result = run_cli(
@@ -225,7 +226,7 @@ def test_ask_json(
 def test_ask_quiet(
     cli_binary: Path,
     pat_token: str,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    answering_llm: MockLLMScript,  # noqa: ARG001
 ) -> None:
     """Quiet mode buffers output and prints once."""
     result = run_cli(
@@ -241,7 +242,7 @@ def test_ask_quiet(
 def test_ask_truncation(
     cli_binary: Path,
     pat_token: str,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    answering_llm: MockLLMScript,  # noqa: ARG001
 ) -> None:
     """Non-TTY output is truncated with a temp file path."""
     result = run_cli(
@@ -259,7 +260,7 @@ def test_ask_agent_id(
     cli_binary: Path,
     pat_token: str,
     seeded_persona: DATestPersona,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    answering_llm: MockLLMScript,  # noqa: ARG001
 ) -> None:
     """--agent-id routes the question to a specific persona."""
     result = run_cli(
@@ -275,7 +276,7 @@ def test_ask_agent_id(
 def test_ask_no_truncation(
     cli_binary: Path,
     pat_token: str,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    answering_llm: MockLLMScript,  # noqa: ARG001
 ) -> None:
     """--max-output 0 disables truncation entirely."""
     result = run_cli(
@@ -374,7 +375,7 @@ def test_search_returns_results(
     cli_binary: Path,
     pat_token: str,
     admin_user: DATestUser,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    mock_llm: MockLLMScript,  # noqa: ARG001
     api_key: DATestAPIKey,
 ) -> None:
     """Search returns results containing the seeded document content."""
@@ -393,7 +394,7 @@ def test_search_raw(
     cli_binary: Path,
     pat_token: str,
     admin_user: DATestUser,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    mock_llm: MockLLMScript,  # noqa: ARG001
     api_key: DATestAPIKey,
 ) -> None:
     """--raw outputs the full SearchResponse as JSON."""
@@ -417,7 +418,7 @@ def test_search_truncation(
     cli_binary: Path,
     pat_token: str,
     admin_user: DATestUser,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    mock_llm: MockLLMScript,  # noqa: ARG001
     api_key: DATestAPIKey,
 ) -> None:
     """--max-output keeps stdout valid JSON and adds truncation metadata."""
@@ -479,7 +480,7 @@ def test_search_source_filter(
     cli_binary: Path,
     pat_token: str,
     admin_user: DATestUser,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    mock_llm: MockLLMScript,  # noqa: ARG001
     api_key: DATestAPIKey,
 ) -> None:
     """--source filters results to matching source types."""
@@ -505,7 +506,7 @@ def test_search_agent_id(
     cli_binary: Path,
     pat_token: str,
     admin_user: DATestUser,
-    llm_provider: DATestLLMProvider,  # noqa: ARG001
+    mock_llm: MockLLMScript,  # noqa: ARG001
     api_key: DATestAPIKey,
 ) -> None:
     """--agent-id scopes search to a persona's document sets."""
