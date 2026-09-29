@@ -32,10 +32,13 @@ def get_document_info(
     # This flow is for search so we do not get all indices.
     document_index = get_default_document_index(search_settings, None, db_session)
 
-    user_acl_filters = build_access_filters_for_user(user, db_session)
+    user_access_filters = build_access_filters_for_user(user, db_session)
     inference_chunks = document_index.id_based_retrieval(
         chunk_requests=[DocumentSectionRequest(document_id=document_id)],
-        filters=IndexFilters(access_control_list=user_acl_filters),
+        filters=IndexFilters(
+            access_control_list=user_access_filters.access_control_list,
+            cc_pair_access=user_access_filters.cc_pair_access,
+        ),
     )
 
     if not inference_chunks:
@@ -77,7 +80,7 @@ def get_chunk_info(
     # This flow is for search so we do not get all indices.
     document_index = get_default_document_index(search_settings, None, db_session)
 
-    user_acl_filters = build_access_filters_for_user(user, db_session)
+    user_access_filters = build_access_filters_for_user(user, db_session)
     chunk_request = DocumentSectionRequest(
         document_id=document_id,
         min_chunk_ind=chunk_id,
@@ -86,7 +89,10 @@ def get_chunk_info(
 
     inference_chunks = document_index.id_based_retrieval(
         chunk_requests=[chunk_request],
-        filters=IndexFilters(access_control_list=user_acl_filters),
+        filters=IndexFilters(
+            access_control_list=user_access_filters.access_control_list,
+            cc_pair_access=user_access_filters.cc_pair_access,
+        ),
         batch_retrieval=True,
     )
 
