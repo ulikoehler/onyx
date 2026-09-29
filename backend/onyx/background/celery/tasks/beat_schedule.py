@@ -333,6 +333,20 @@ if (
         }
     )
 
+if ENABLE_OPENSEARCH_INDEXING_FOR_ONYX:
+    beat_task_templates.append(
+        {
+            "name": "backfill-cc-pair-ids",
+            "task": OnyxCeleryTask.BACKFILL_CC_PAIR_IDS_TASK,
+            "schedule": timedelta(minutes=5),
+            "options": {
+                "priority": OnyxCeleryPriority.LOW,
+                "expires": BEAT_EXPIRES_DEFAULT,
+                "queue": OnyxCeleryQueues.OPENSEARCH_MIGRATION,
+            },
+        }
+    )
+
 
 # Beat task names that require a vector DB. Filtered out when DISABLE_VECTOR_DB.
 _VECTOR_DB_BEAT_TASK_NAMES: set[str] = {
@@ -348,6 +362,7 @@ _VECTOR_DB_BEAT_TASK_NAMES: set[str] = {
     "check-for-doc-permissions-sync",
     "check-for-external-group-sync",
     "migrate-chunks-from-vespa-to-opensearch",
+    "backfill-cc-pair-ids",
 }
 
 if DISABLE_VECTOR_DB:
