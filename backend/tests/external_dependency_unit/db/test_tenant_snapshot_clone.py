@@ -4,7 +4,8 @@ must catch a structural or row difference, since it gates the deploy."""
 
 import os
 import uuid
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 from typing import cast
 from unittest.mock import patch
 
@@ -129,21 +130,11 @@ def test_deploy_gate_passes_for_the_template_snapshot(shard: str, dump: str) -> 
 def test_rollout_stores_the_template_only_at_head(shard: str) -> None:
     head = tenant_snapshot.get_head_revision()
     assert head is not None
-    try:
+    with _snapshot_row_restored(shard, head):
         tenant_snapshot.store_template_snapshots(head)
         assert tenant_snapshot.get_snapshot(shard, head)
         with pytest.raises(RuntimeError):
             tenant_snapshot.store_template_snapshots("not-the-head")
-    finally:
-        with tenant_snapshot.get_catalog_session() as db_session:
-            db_session.execute(
-                text(
-                    "DELETE FROM public.tenant_schema_snapshot "
-                    "WHERE shard_name = :shard AND alembic_revision = :head"
-                ),
-                {"shard": shard, "head": head},
-            )
-            db_session.commit()
 
 
 def test_template_is_rotated_by_shard(shard: str) -> None:
@@ -156,12 +147,20 @@ def test_template_is_rotated_by_shard(shard: str) -> None:
     assert seeded_tools and seeded_tools > 0
 
 
-@pytest.fixture
-def stored_snapshot(shard: str) -> Generator[str, None, None]:
-    head = tenant_snapshot.get_head_revision()
-    assert head is not None
-    tenant_snapshot.store_template_snapshots(head)
-    yield head
+@contextmanager
+def _snapshot_row_restored(shard: str, head: str) -> Iterator[None]:
+    """Whatever the catalog held for this shard and head is put back afterwards."""
+    before = tenant_snapshot.get_snapshot(shard, head)
+    try:
+        yield
+    finally:
+        if before is not None:
+            tenant_snapshot.store_snapshot(shard, head, before)
+        else:
+            _delete_snapshot_row(shard, head)
+
+
+def _delete_snapshot_row(shard: str, head: str) -> None:
     with tenant_snapshot.get_catalog_session() as db_session:
         db_session.execute(
             text(
@@ -171,6 +170,15 @@ def stored_snapshot(shard: str) -> Generator[str, None, None]:
             {"shard": shard, "head": head},
         )
         db_session.commit()
+
+
+@pytest.fixture
+def stored_snapshot(shard: str) -> Generator[str, None, None]:
+    head = tenant_snapshot.get_head_revision()
+    assert head is not None
+    with _snapshot_row_restored(shard, head):
+        tenant_snapshot.store_template_snapshots(head)
+        yield head
 
 
 @pytest.fixture
