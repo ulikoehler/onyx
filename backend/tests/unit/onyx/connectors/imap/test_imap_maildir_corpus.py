@@ -73,20 +73,31 @@ if pytest is not None:
             )
 
 
+def _process_email_capturing(path: Path) -> tuple[Path, str | None]:
+    try:
+        _process_email(path)
+        return path, None
+    except Exception as e:  # noqa: BLE001 - corpus harness reports all failures
+        return path, f"{type(e).__name__}: {e}"
+
+
 if __name__ == "__main__":
+    from concurrent.futures import ProcessPoolExecutor
+
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <maildir>", file=sys.stderr)
         sys.exit(2)
 
     files = _iter_maildir_files(Path(sys.argv[1]))
-    failures: dict[Path, Exception] = {}
-    for path in files:
-        try:
-            _process_email(path)
-        except Exception as e:  # noqa: BLE001 - corpus harness reports all failures
-            failures[path] = e
+    failures: dict[Path, str] = {}
+    with ProcessPoolExecutor(max_workers=16) as pool:
+        for path, error in pool.map(
+            _process_email_capturing, files, chunksize=32
+        ):
+            if error is not None:
+                failures[path] = error
 
-    for path, e in failures.items():
-        print(f"FAIL {path}: {type(e).__name__}: {e}")
+    for path, error in failures.items():
+        print(f"FAIL {path}: {error}")
     print(f"{len(files) - len(failures)}/{len(files)} emails parsed successfully")
     sys.exit(1 if failures else 0)
