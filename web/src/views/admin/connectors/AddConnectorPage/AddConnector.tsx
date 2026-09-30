@@ -66,7 +66,10 @@ import { deleteConnector } from "@/lib/connector";
 import ConnectorDocsLink from "@/components/admin/connectors/ConnectorDocsLink";
 import { SvgArrowExchange, SvgKey, SvgSimpleLoader } from "@opal/icons";
 import { useTranslations } from "next-intl";
-import { toWireAccess } from "@/lib/connectors/accessType";
+import {
+  SYNC_RESTRICTED_ACCESS_TYPE,
+  toWireAccess,
+} from "@/lib/connectors/accessType";
 
 export interface AdvancedConfig {
   refreshFreq: number;
@@ -497,15 +500,17 @@ export default function AddConnector({
                 currentCredential ||
                 liveGDriveCredential ||
                 liveGmailCredential;
-              // TODO(evan, ENG-4342): send wireAccess.restriction_group_ids
-              // once the backend accepts them; this call creates the cc-pair.
               const linkCredentialResponse = await linkCredential(
                 response.id,
                 credential!.id,
                 name,
                 access_type,
                 groups,
-                auto_sync_options
+                auto_sync_options,
+                undefined,
+                access_type === SYNC_RESTRICTED_ACCESS_TYPE
+                  ? wireAccess.restriction_group_ids
+                  : undefined
               );
               if (linkCredentialResponse.ok) {
                 onSuccess();

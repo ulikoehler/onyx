@@ -60,6 +60,7 @@ from onyx.db.index_attempt import (
 from onyx.db.index_attempt_metrics import get_stage_metrics_for_attempt
 from onyx.db.indexing_coordination import IndexingCoordination
 from onyx.db.models import ConnectorCredentialPair, IndexAttempt, User
+from onyx.db.opensearch_migration import get_opensearch_retrieval_state
 from onyx.db.permission_sync_attempt import (
     get_latest_doc_permission_sync_attempt_for_cc_pair,
     get_recent_doc_permission_sync_attempts_for_cc_pair,
@@ -812,6 +813,21 @@ def get_cc_pair_indexing_errors(
     )
 
 
+def _assert_sync_restricted_allowed(db_session: Session) -> None:
+    if not get_security_settings().allow_connector_group_restrictions:
+        raise OnyxError(
+            OnyxErrorCode.FEATURE_NOT_AVAILABLE,
+            "Group restrictions on permission-synced connectors are turned off "
+            "for this workspace.",
+        )
+    # The Vespa ACL filter cannot express the restriction.
+    if not get_opensearch_retrieval_state(db_session):
+        raise OnyxError(
+            OnyxErrorCode.FEATURE_NOT_AVAILABLE,
+            "Restricted connectors need OpenSearch retrieval.",
+        )
+
+
 @router.put(
     "/connector/{connector_id}/credential/{credential_id}", tags=PUBLIC_API_TAGS
 )
@@ -832,27 +848,19 @@ def associate_credential_to_connector(
     """
 
     if metadata.access_type == AccessType.SYNC_RESTRICTED:
-        # Becomes creatable in the same change that enforces its data-access
-        # groups at query time, so no restricted pair exists without them.
-        # TODO(evan, ENG-4342): remove this rejection in the enforcement change,
-        # together with:
-        # - the allowed-connector query filter and the /chat/file check
-        # - the creation path: restriction_group_ids, validation, persistence
-        #   (branch jtahara/connector-group-restrictions-creation-path)
-        # - SYNC-only checks in connector_credential_pair.py: listing
-        #   visibility, tier/source validation, get_all_auto_sync_cc_pairs,
-        #   get_cc_pairs_by_source
-        # - creating the pair and its data-access rows in one transaction
-        raise OnyxError(
-            OnyxErrorCode.FEATURE_NOT_AVAILABLE,
-            "Restricted perm-synced connectors are not available yet.",
-        )
-
-    if metadata.data_access:
-        if metadata.access_type != AccessType.PRIVATE:
+        _assert_sync_restricted_allowed(db_session)
+        if not metadata.data_access:
             raise OnyxError(
                 OnyxErrorCode.INVALID_INPUT,
-                "Data-access groups can only be set on private connectors.",
+                "A restricted connector needs at least one data-access group.",
+            )
+
+    if metadata.data_access:
+        if metadata.access_type not in AccessType.data_access_types():
+            raise OnyxError(
+                OnyxErrorCode.INVALID_INPUT,
+                "Data-access groups can only be set on private or restricted "
+                "connectors.",
             )
         visible_group_ids = get_visible_user_group_ids(user, db_session)
         if visible_group_ids is not None and not visible_group_ids.issuperset(
