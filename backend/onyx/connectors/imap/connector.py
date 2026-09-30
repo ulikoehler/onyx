@@ -6,7 +6,7 @@ import re
 import ssl
 from datetime import datetime, timezone
 from email.message import Message
-from email.utils import parseaddr
+from email.utils import getaddresses
 from enum import Enum
 from typing import Any, cast
 
@@ -202,13 +202,20 @@ class ImapConnector(
                 )
                 continue
 
-            email_headers = EmailHeaders.from_email_msg(email_msg=email_msg)
-
-            yield _convert_email_headers_and_body_into_document(
-                email_msg=email_msg,
-                email_headers=email_headers,
-                include_perm_sync=include_perm_sync,
-            )
+            try:
+                email_headers = EmailHeaders.from_email_msg(email_msg=email_msg)
+                yield _convert_email_headers_and_body_into_document(
+                    email_msg=email_msg,
+                    email_headers=email_headers,
+                    include_perm_sync=include_perm_sync,
+                )
+            except Exception:
+                # A single malformed email must not abort the batch.
+                logger.exception(
+                    "Failed to convert email_id=%r to a document; skipping",
+                    email_id,
+                )
+                continue
 
         return checkpoint
 
@@ -360,7 +367,7 @@ def _convert_email_headers_and_body_into_document(
         )
         for recipient_name, recipient_addr in parsed_recipients
     }
-    if sender_addr not in expert_info_map:
+    if sender_addr and sender_addr not in expert_info_map:
         expert_info_map[sender_addr] = BasicExpertInfo(
             display_name=sender_name, email=sender_addr
         )
@@ -438,22 +445,35 @@ def _sanitize_mailbox_names(mailboxes: list[str]) -> list[str]:
 
 
 def _parse_addrs(raw_header: str) -> list[tuple[str, str]]:
-    addrs = raw_header.split(",")
-    name_addr_pairs = [parseaddr(addr=addr) for addr in addrs if addr]
-    return [(name, addr) for name, addr in name_addr_pairs if addr]
+    # getaddresses parses the whole header and respects quoted commas in
+    # display names like "Lastname, Firstname" <a@b.c>.
+    name_addr_pairs = getaddresses([raw_header])
+    # Drop fragments without an @ — they are display-name remnants, not
+    # addresses (e.g. unquoted "Restle, Rüdiger").
+    addrs = [(name, addr) for name, addr in name_addr_pairs if addr and "@" in addr]
+    if not addrs:
+        # Fallback for headers where getaddresses yields nothing usable,
+        # e.g. "Name (comment) [TAG] <a@b.c>".
+        addrs = [
+            ("", addr)
+            for addr in re.findall(r"<([^<>\s]+@[^<>\s]+)>", raw_header)
+        ]
+    return addrs
 
 
 def _parse_singular_addr(raw_header: str) -> tuple[str, str]:
     addrs = _parse_addrs(raw_header=raw_header)
     if not addrs:
-        raise RuntimeError(
-            f"Parsing email header resulted in no addresses being found; {raw_header=}"
+        logger.warning(
+            "No address found in email header %r; using it as display name",
+            raw_header,
         )
-    elif len(addrs) >= 2:
-        raise RuntimeError(
-            f"Expected a singular address, but instead got multiple; {raw_header=} {addrs=}"
+        return (raw_header.strip("\"' "), "")
+    if len(addrs) >= 2:
+        logger.warning(
+            "Multiple addresses in email header %r; using the first",
+            raw_header,
         )
-
     return addrs[0]
 
 
