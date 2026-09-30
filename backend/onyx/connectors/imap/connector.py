@@ -202,13 +202,21 @@ class ImapConnector(
                 )
                 continue
 
-            email_headers = EmailHeaders.from_email_msg(email_msg=email_msg)
+            try:
+                email_headers = EmailHeaders.from_email_msg(email_msg=email_msg)
 
-            yield _convert_email_headers_and_body_into_document(
-                email_msg=email_msg,
-                email_headers=email_headers,
-                include_perm_sync=include_perm_sync,
-            )
+                yield _convert_email_headers_and_body_into_document(
+                    email_msg=email_msg,
+                    email_headers=email_headers,
+                    include_perm_sync=include_perm_sync,
+                )
+            except Exception:
+                # A single malformed email must not abort the whole batch.
+                logger.exception(
+                    "Failed to convert email_id=%r to a document; skipping",
+                    email_id,
+                )
+                continue
 
         return checkpoint
 
@@ -360,7 +368,7 @@ def _convert_email_headers_and_body_into_document(
         )
         for recipient_name, recipient_addr in parsed_recipients
     }
-    if sender_addr not in expert_info_map:
+    if sender_addr and sender_addr not in expert_info_map:
         expert_info_map[sender_addr] = BasicExpertInfo(
             display_name=sender_name, email=sender_addr
         )
@@ -440,18 +448,44 @@ def _sanitize_mailbox_names(mailboxes: list[str]) -> list[str]:
 def _parse_addrs(raw_header: str) -> list[tuple[str, str]]:
     # getaddresses honors quoted display names; a naive split on ","
     # breaks on headers like '"Lastname, Firstname" <a@b.c>'.
-    return [(name, addr) for name, addr in getaddresses([raw_header]) if addr]
+    # Fragments without "@" are display-name remnants, not addresses.
+    addrs = [
+        (name, addr)
+        for name, addr in getaddresses([raw_header])
+        if addr and "@" in addr
+    ]
+    if not addrs:
+        # getaddresses can yield nothing on headers mixing comments and
+        # brackets, e.g. 'Name (comment) [TAG] <a@b.c>'; extract the
+        # angle-addr directly as a fallback.
+        match = re.search(r"<([^<>\s]+@[^<>\s]+)>", raw_header)
+        if match:
+            name = raw_header[: match.start()].strip(' "')
+            addrs = [(name, match.group(1))]
+    return addrs
 
 
 def _parse_singular_addr(raw_header: str) -> tuple[str, str]:
+    """Best-effort parse of a From-style header into (name, addr).
+
+    Real-world headers are frequently malformed: missing angle brackets,
+    unquoted display names containing commas, bare display names without
+    any address, or outright garbage like a lone '"'. Never raise here —
+    return the first usable address, or treat the header as a bare display
+    name with an empty address.
+    """
     addrs = _parse_addrs(raw_header=raw_header)
     if not addrs:
-        raise RuntimeError(
-            f"Parsing email header resulted in no addresses being found; {raw_header=}"
+        logger.warning(
+            "No address found in header; using header as display name: %r",
+            raw_header,
         )
-    elif len(addrs) >= 2:
-        raise RuntimeError(
-            f"Expected a singular address, but instead got multiple; {raw_header=} {addrs=}"
+        return raw_header.strip(), ""
+    if len(addrs) >= 2:
+        logger.warning(
+            "Multiple addresses in singular header; using the first: %r %r",
+            raw_header,
+            addrs,
         )
 
     return addrs[0]
